@@ -292,12 +292,18 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
         bundle, batch = self.data_queue.get()
         ray_bundle = bundle.to(self.device)
 
+        # Save the directions of the rays that are in the center of the image
+        # The average of these are assumed to be the vertical axis in the scene and is used to project the orthophoto
         indices = batch["indices"]
         center_index = None
+        # Set the downscale factor, image width and image height to the correct values
+        # These are used to find the center of the image
+        downscale_factor = 2
+        width = 5280
+        height = 3956
         for i, row in enumerate(indices):
-            downscale_factor = 2
-            if int(math.floor(3956 / (2 * downscale_factor))) <= row[1] <= int(math.ceil(3956 / (2 * downscale_factor))) \
-                and int(math.floor(5280 / (2 * downscale_factor))) <= row[2] <= int(math.ceil(5280 / (2 * downscale_factor))):
+            if int(math.floor(height / (2 * downscale_factor))) <= row[1] <= int(math.ceil(height / (2 * downscale_factor))) \
+                and int(math.floor(width / (2 * downscale_factor))) <= row[2] <= int(math.ceil(width / (2 * downscale_factor))):
                 center_index = i
                 direction = ray_bundle.directions[center_index]
                 with open("directions.txt", "a") as f:
