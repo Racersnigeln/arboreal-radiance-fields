@@ -41,6 +41,12 @@ from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttrib
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import profiler
 
+# For orthophoto generation
+from PIL import Image
+import numpy as np
+import math
+import random
+import os 
 
 def module_wrapper(ddp_or_model: Union[DDP, Model]) -> Model:
     """
@@ -374,6 +380,79 @@ class VanillaPipeline(Pipeline):
             task = progress.add_task("[green]Evaluating all eval images...", total=num_images)
             idx = 0
             for camera, batch in self.datamanager.fixed_indices_eval_dataloader:
+                if not os.path.isfile('outputs/orthophoto-0.jpg'):
+                    def load_tensors_from_file(file_path):
+                        tensors = []
+                        with open(file_path, 'r') as file:
+                            for line in file:
+                                # Extract the numerical part of the line and convert to list of floats
+                                nums = line.strip().split('[')[1].split(']')[0].split(',')
+                                # print(nums)
+                                nums = [float(num.strip()) for num in nums]
+                                
+                                # Create a tensor from the list of floats
+                                # tensor = torch.tensor(nums, device='cuda:0')  # Assuming you want to load it directly to CUDA device
+                                tensors.append(nums)
+                        # print(tensors)
+                        return torch.Tensor(tensors)
+
+                    def rotation_matrix_from_vectors(vec1, vec2):
+                        """ Find the rotation matrix that aligns vec1 to vec2
+                        :param vec1: A 3d "source" vector
+                        :param vec2: A 3d "destination" vector
+                        :return mat: A transform matrix (3x3) which when applied to vec1, aligns it with vec2.
+                        """
+                        a, b = (vec1 / np.linalg.norm(vec1)).reshape(3), (vec2 / np.linalg.norm(vec2)).reshape(3)
+                        v = np.cross(a, b)
+                        if any(v): #if not all zeros then 
+                            c = np.dot(a, b)
+                            s = np.linalg.norm(v)
+                            kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+                            return np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
+                        else:
+                            return np.eye(3) #cross of all zeros only occurs on identical directions
+
+                    for i in [9,8,6]:
+                        
+                        # Orthophoto
+                        from nerfstudio.cameras.cameras import CameraType
+                        from nerfstudio.cameras.cameras import Cameras
+                        
+                        directions = load_tensors_from_file("directions.txt")
+                        direction = torch.mean(directions, axis=0)
+
+                        R = rotation_matrix_from_vectors(np.array([0, 0, -1]), np.array(direction))
+                        R = torch.Tensor(R)
+                        
+                        direction = torch.Tensor(direction)
+                        distance = 0.05 * i
+                        T = torch.zeros(3) + distance * direction
+                        c2w = torch.cat((R, T.view(3, 1)), dim=1)
+
+                        scale = 1.333333333333333333333
+                        fx = torch.Tensor([2000*scale]).view(1, 1)
+                        fy = torch.Tensor([2000*scale]).view(1, 1)
+                        cx = torch.Tensor([3000*scale]).view(1, 1)
+                        cy = torch.Tensor([3000*scale]).view(1, 1)
+                        height = torch.Tensor([6000*scale]).to(int).view(1, 1)
+                        width = torch.Tensor([6000*scale]).to(int).view(1, 1)
+                        distortion_params = torch.zeros(1, 6)
+                        camera_type = torch.Tensor([CameraType.ORTHOPHOTO.value]).to(int).view(1, 1)
+
+                        ortho_camera = Cameras(c2w, fx, fy, cx, cy, height, width, distortion_params, camera_type)
+                        outputs = self.model.get_outputs_for_camera(camera=ortho_camera)
+                        
+                        # Convert RGB valus to jpg image
+                        rgbs = outputs["rgb"]
+                        # print(rgbs)
+                        rgb_array = rgbs.cpu().numpy()
+                        # Scale the values from [0, 1] to [0, 255]
+                        rgb_array = (rgb_array * 255).astype(np.uint8)
+                        image = Image.fromarray(rgb_array)
+                        image.save(f"outputs/orthophoto-{i}.jpg")
+                        # print(f"Iteration {i}, Theta: {theta}, Phi: {phi}, T: {T}")
+                        print("ORTHOPHOTO GENERATED")
+
                 # time this the following line
                 inner_start = time()
                 outputs = self.model.get_outputs_for_camera(camera=camera)

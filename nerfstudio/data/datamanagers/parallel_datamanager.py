@@ -46,6 +46,8 @@ from nerfstudio.model_components.ray_generators import RayGenerator
 from nerfstudio.utils.misc import get_orig_class
 from nerfstudio.utils.rich_utils import CONSOLE
 
+# Fort orthophotos
+import math
 
 @dataclass
 class ParallelDataManagerConfig(VanillaDataManagerConfig):
@@ -289,6 +291,18 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
         self.train_count += 1
         bundle, batch = self.data_queue.get()
         ray_bundle = bundle.to(self.device)
+
+        indices = batch["indices"]
+        center_index = None
+        for i, row in enumerate(indices):
+            downscale_factor = 2
+            if int(math.floor(3956 / (2 * downscale_factor))) <= row[1] <= int(math.ceil(3956 / (2 * downscale_factor))) \
+                and int(math.floor(5280 / (2 * downscale_factor))) <= row[2] <= int(math.ceil(5280 / (2 * downscale_factor))):
+                center_index = i
+                direction = ray_bundle.directions[center_index]
+                with open("directions.txt", "a") as f:
+                    f.write(f"{direction}\n")
+
         return ray_bundle, batch
 
     def next_eval(self, step: int) -> Tuple[RayBundle, Dict]:
